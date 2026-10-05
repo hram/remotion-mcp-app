@@ -13,6 +13,7 @@ export type VideoMeta = {
 export type VideoProjectData = {
   meta: VideoMeta;
   bundle: string;
+  css?: string;
   defaultProps: Record<string, unknown>;
   inputProps: Record<string, unknown>;
   compileError?: string;

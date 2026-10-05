@@ -1,5 +1,8 @@
 import { MCPServer } from "mcp-use";
 import { z } from "zod";
+import { readFile } from "node:fs/promises";
+import { closeRenderer, inspectFrames, exportVideo, getArtifact } from "./renderer/index.js";
+import { inspectFramesSchema, exportVideoSchema } from "./renderer/options.js";
 import { observeMcpToolCall, posthog } from "./observability.js";
 import { RULE_INDEX } from "./rules/index.js";
 import { RULE_REACT_CODE } from "./rules/react-code.js";
@@ -15,6 +18,7 @@ import {
   failProject,
   formatZodIssues,
   getSessionProject,
+  resolveSessionId,
 } from "./utils.js";
 
 const server = new MCPServer({
@@ -30,10 +34,13 @@ if (posthog) {
   server.use("mcp:tools/call", observeMcpToolCall);
 }
 
-process.on("SIGTERM", async () => {
+async function shutdown() {
+  await closeRenderer();
   if (posthog) await posthog.shutdown();
   process.exit(0);
-});
+}
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);
 
 // --- Rule tools ---
 
@@ -102,6 +109,8 @@ const createVideoSchema = z.object({
   fps: z.number().optional().describe("Frames per second (default: 30)"),
   width: z.number().optional().describe("Width in pixels (default: 1920)"),
   height: z.number().optional().describe("Height in pixels (default: 1080)"),
+  defaultProps: z.record(z.string(), z.unknown()).optional(),
+  inputProps: z.record(z.string(), z.unknown()).optional(),
 });
 
 const createVideoOutputSchema = z.object({
@@ -127,12 +136,8 @@ export const createVideo = server.tool(
     },
   },
   async (rawParams: z.infer<typeof createVideoSchema>, ctx) => {
-    const caller = ctx.client.user();
-    const sessionId =
-      caller?.conversationId ??
-      caller?.subject ??
-      ctx.request?.header("mcp-session-id") ??
-      "anonymous";
+    let sessionId: string;
+    try { sessionId = resolveSessionId(ctx); } catch (error) { return failProject((error as Error).message); }
 
     // Parse files from JSON string
     let files: Record<string, string>;
@@ -165,8 +170,8 @@ export const createVideo = server.tool(
       durationInFrames: rawParams.durationInFrames ?? previous?.durationInFrames,
       entryFile: rawParams.entryFile ?? previous?.entryFile,
       files: mergedFiles,
-      defaultProps: previous?.defaultProps,
-      inputProps: previous?.inputProps,
+      defaultProps: rawParams.defaultProps ?? previous?.defaultProps,
+      inputProps: rawParams.inputProps ?? previous?.inputProps,
     };
 
     const parseResult = projectVideoSchema.safeParse(project);
@@ -182,6 +187,47 @@ export const createVideo = server.tool(
     return compileAndRespondWithProject(parseResult.data, sessionId, statusLines, "create_video");
   }
 );
+
+function renderFailure(error: unknown) {
+  return { isError: true, content: [{ type: "text" as const, text: error instanceof Error ? error.stack ?? error.message : String(error) }] };
+}
+
+export const inspectVideoFrames = server.tool({
+  name: "inspect_frames",
+  description: "Render a few frames of the current session video as image content for visual critique. Defaults to reduced-resolution frames fitting within 480x480; use previewWidth or scale and optional JPEG compression for cheap drafts. Inspect 5–7 frames, fix issues, repeat; export only once when ready. No source code needs to be resent.",
+  inputSchema: inspectFramesSchema,
+}, async (params, ctx) => {
+  try { return await inspectFrames(resolveSessionId(ctx), params); } catch (error) { return renderFailure(error); }
+});
+
+export const exportCurrentVideo = server.tool({
+  name: "export_video",
+  description: "Render the current session video at full resolution to H.264/yuv420p MP4 and return a downloadable file resource. Use cheap inspect_frames during iterations; call this once after final visual inspection. Set muted: true for a video without an audio track.",
+  inputSchema: exportVideoSchema,
+}, async (params, ctx) => {
+  try {
+    const sessionId = resolveSessionId(ctx);
+    const { artifact, ...meta } = await exportVideo(sessionId, params);
+    const base = process.env.REMOTION_PUBLIC_URL ?? (ctx.request ? new URL(ctx.request.url).origin : "http://localhost:3000");
+    const url = new URL(`/artifacts/${artifact.id}`, base).href;
+    return {
+      content: [{ type: "text" as const, text: `Exported ${artifact.name} (${artifact.size} bytes). Download: ${url}` }, { type: "resource_link" as const, uri: url, name: artifact.name, mimeType: "video/mp4", size: artifact.size }],
+      structuredContent: { ...meta, url, name: artifact.name, size: artifact.size, mimeType: "video/mp4" },
+    };
+  } catch (error) { return renderFailure(error); }
+});
+
+// UUID URLs are bearer capabilities; source/session identifiers are never exposed.
+server.get("/artifacts/:id", async (c) => {
+  const artifact = getArtifact(c.req.param("id"));
+  if (!artifact) return c.text("Artifact not found or expired", 404);
+  return new Response(new Uint8Array(await readFile(artifact.file)), { headers: {
+    "Content-Type": "video/mp4",
+    "Content-Disposition": `attachment; filename="${artifact.name}"`,
+    "Content-Length": String(artifact.size),
+    "Cache-Control": "private, no-store",
+  } });
+});
 
 server.get("/.well-known/openai-apps-challenge", (c) => {
   return c.text("gP0NHv0ywqzsT3-iJ5is_xR6HysaW9Gbls7TeneGl8M");

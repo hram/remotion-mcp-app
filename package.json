@@ -24,12 +24,16 @@
     "dev:hmr": "mcp-use dev",
     "start": "mcp-use start",
     "deploy": "mcp-use deploy",
-    "typecheck": "mcp-use typecheck"
+    "typecheck": "mcp-use typecheck",
+    "test": "tsx --test tests/unit.test.ts",
+    "test:integration": "npm run build && tsx --test tests/integration.test.ts"
   },
   "dependencies": {
     "@paper-design/shaders-react": "^0.0.71",
     "@posthog/mcp": "0.10.3",
+    "@remotion/bundler": "4.0.505",
     "@remotion/player": "4.0.505",
+    "@remotion/renderer": "4.0.505",
     "@remotion/transitions": "4.0.505",
     "esbuild": "^0.28.1",
     "mcp-use": "^2.0.4",
@@ -38,6 +42,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "remotion": "4.0.505",
+    "sharp": "0.35.5",
     "tailwindcss": "^4.0.0",
     "zod": "^4.4.3"
   },
@@ -48,6 +53,7 @@
     "@types/node": "^22.20.0",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.3"
   }
 }

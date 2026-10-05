@@ -132,6 +132,7 @@ function parseVideoProject(input: Record<string, unknown> | null): VideoProjectD
         durationInFrames: positiveNumberOrFallback(meta.durationInFrames, 150),
       },
       bundle,
+      css: typeof parsed.css === "string" ? parsed.css : undefined,
       defaultProps: toPropsObject(parsed.defaultProps),
       inputProps: toPropsObject(parsed.inputProps),
       compileError:
@@ -387,6 +388,8 @@ const updateVideoSchema = z.object({
   fps: z.number().positive().optional().describe("Updated frames per second"),
   width: z.number().positive().optional().describe("Updated composition width in pixels"),
   height: z.number().positive().optional().describe("Updated composition height in pixels"),
+  defaultProps: z.record(z.string(), z.unknown()).optional(),
+  inputProps: z.record(z.string(), z.unknown()).optional(),
 });
 
 const updateVideoOutputSchema = z.object({
@@ -581,6 +584,13 @@ function RemotionPlayerWidgetInner() {
   }, [rawVideoProject]);
 
   const currentData = viewOverride ?? finalData;
+  useEffect(() => {
+    if (!currentData?.css) return;
+    const style = document.createElement("style");
+    style.textContent = currentData.css;
+    document.head.appendChild(style);
+    return () => { style.remove(); };
+  }, [currentData?.css]);
   const isBusy = isPending || createVideo.isPending || isCompiling;
   const data = currentData || (isBusy ? prevRef.current : null);
   const hasData = !!data;

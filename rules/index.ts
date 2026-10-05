@@ -20,6 +20,8 @@ Call these tools to learn specific Remotion topics:
 2. Build your project as a **files** map: { "/src/Video.tsx": "source code..." }
 3. Call **create_video** with files (and optionally entryFile, title, fps, etc.)
 4. For edits, call **create_video** again with only the changed files — previous files are preserved automatically
+5. Call **inspect_frames** for 5–7 representative frames, including first and last frames. Previews render at reduced resolution (default: fit within 480×480). Use previewWidth or scale and optional imageFormat: "jpeg", jpegQuality: 75 for cheap drafts. Visually check layout/readability and fix concrete issues through **update_video** (or **create_video**).
+6. Repeat cheap inspection after edits. Do not export MP4 during design iterations. After the final visual check, call **export_video** once at full resolution. Set muted: true for a video without an audio track.
 
 ## Important Rules
 

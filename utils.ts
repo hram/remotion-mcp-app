@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { RequestContext } from "mcp-use";
 import { build, type Loader, type Plugin } from "esbuild";
 import path from "node:path";
 import * as ReactModule from "react";
@@ -212,7 +213,7 @@ function addRemotionCompileHints(message: string): string {
   return `${message}\n\n${hints.join("\n")}`;
 }
 
-async function compileProjectBundle(files: Record<string, string>, entryFile: string): Promise<string> {
+async function compileProjectBundle(files: Record<string, string>, entryFile: string): Promise<{bundle: string; css?: string}> {
   const normalizedFiles = normalizeFileMap(files);
   const normalizedEntry = normalizeVirtualPath(entryFile);
 
@@ -281,6 +282,7 @@ async function compileProjectBundle(files: Record<string, string>, entryFile: st
     result = await build({
       bundle: true,
       write: false,
+      outdir: "virtual-output",
       format: "iife",
       platform: "browser",
       target: ["es2020"],
@@ -302,12 +304,12 @@ async function compileProjectBundle(files: Record<string, string>, entryFile: st
     throw new Error(addRemotionCompileHints(formatCompileFailure(error)));
   }
 
-  const output = result.outputFiles[0]?.text;
+  const output = result.outputFiles.find((file) => file.path.endsWith(".js"))?.text;
   if (!output) {
     throw new Error("Compilation produced no JavaScript output.");
   }
 
-  return output;
+  return { bundle: output, css: result.outputFiles.find((file) => file.path.endsWith(".css"))?.text };
 }
 
 function validatePositiveNumber(name: string, value: number): string | null {
@@ -329,6 +331,9 @@ export const DEFAULT_META = {
 const ERROR_FALLBACK_BUNDLE = `var ${RUNTIME_BUNDLE_GLOBAL} = { default: function RemotionFallback() { return null; } };`;
 
 export type SessionProjectState = {
+  bundle?: string;
+  css?: string;
+  compileError?: string;
   title: string;
   compositionId: string;
   width: number;
@@ -361,6 +366,7 @@ function buildProjectData(
   overrides: Partial<VideoProjectData["meta"]> & { title?: string },
   config: {
     bundle?: string;
+    css?: string;
     defaultProps?: Record<string, unknown>;
     inputProps?: Record<string, unknown>;
     compileError?: string;
@@ -376,6 +382,7 @@ function buildProjectData(
       durationInFrames: overrides.durationInFrames ?? DEFAULT_META.durationInFrames,
     },
     bundle: config.bundle ?? ERROR_FALLBACK_BUNDLE,
+    css: config.css,
     defaultProps: config.defaultProps ?? {},
     inputProps: config.inputProps ?? {},
     compileError: config.compileError,
@@ -446,6 +453,13 @@ export function getSessionProject(sessionId: string): SessionProjectState | null
   return sessionProjects.get(sessionId) ?? null;
 }
 
+export function resolveSessionId(ctx: RequestContext): string {
+  const caller = ctx.client.user();
+  const id = caller?.conversationId ?? ctx.request?.header("mcp-session-id") ?? ctx.request?.header("x-remotion-session-id") ?? caller?.subject;
+  if (!id?.trim()) throw new Error("No session identifier supplied. Include openai/session in request _meta or an x-remotion-session-id header to keep video projects isolated.");
+  return id;
+}
+
 export async function compileAndRespondWithProject(
   parsedInput: ProjectVideoInput,
   sessionId: string,
@@ -477,6 +491,9 @@ export async function compileAndRespondWithProject(
     if (error) {
       return failProject(error, meta, { defaultProps, inputProps });
     }
+    if (fieldName !== "fps" && !Number.isInteger(value)) {
+      return failProject(`${fieldName} must be an integer.`, meta, { defaultProps, inputProps });
+    }
   }
 
   const currentState: SessionProjectState = {
@@ -495,8 +512,12 @@ export async function compileAndRespondWithProject(
 
   let bundle: string;
   try {
-    bundle = await compileProjectBundle(files, entryFile);
+    const compiled = await compileProjectBundle(files, entryFile);
+    bundle = compiled.bundle;
+    currentState.bundle = bundle;
+    currentState.css = compiled.css;
   } catch (error) {
+    currentState.compileError = (error as Error).message;
     return failProject(`Project compilation error: ${(error as Error).message}`, meta, {
       defaultProps,
       inputProps,
@@ -505,6 +526,7 @@ export async function compileAndRespondWithProject(
 
   const projectData: VideoProjectData = buildProjectData(meta, {
     bundle,
+    css: currentState.css,
     defaultProps,
     inputProps,
   });
