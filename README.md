@@ -10,7 +10,7 @@ The upstream app lets an agent write React/Remotion code and lets the user play 
 
 Draft reviews are fast because the renderer draws only a few selected frames at a reduced resolution. The agent can iterate on the same composition and spend the cost of a full video render once, at the end.
 
-## The workflow
+## The agent's workflow
 
 **Write code → inspect a few frames → fix the composition → inspect again → export one MP4.**
 
@@ -27,7 +27,7 @@ flowchart TD
     Review -->|Ready| Export
 ```
 
-Keep each inspection to about **5–7 representative frames**, including the first and last. Check readability, spacing, clipping, and the visual transition between the end and the beginning of a loop. Use the live player to check motion between samples. After a fix, inspect again before exporting.
+The agent reviews about **5–7 representative frames** per iteration, including the first and last. These frames help it spot problems with readability, spacing, clipping, or the start and end of a loop. The live player lets you review motion between samples.
 
 ## Tools added by the fork
 
@@ -38,90 +38,18 @@ Keep each inspection to about **5–7 representative frames**, including the fir
 
 Both tools work on the same project state as the live player. Call `update_video` to edit a mounted player in place. In a client without the player View, call `create_video` again with only the changed files. It merges those files into the project's current revision.
 
-## Walkthrough
+## Use it from your AI client
 
-The following examples show MCP tool calls and their arguments. Make all calls in the same MCP session.
+Select the Remotion MCP in your AI client and describe the video you want in chat. The agent writes the composition, calls the tools, and returns the MP4 link.
 
-### 1. Write the composition
+> Make a short square video that shows how an AI agent improves an Android UI. Use large text and no audio. Review a few representative frames after each revision and fix any readability or layout issues. Once the final frames look right, export one MP4.
 
-```js
-const videoSource = `
-  import { AbsoluteFill, useCurrentFrame, interpolate } from "remotion";
-  import { Title } from "./Title";
+You can ask for changes in the same conversation, for example, “Make the last title larger and check that it fits.” A compatible client can also show the live player for playback.
 
-  export default function Video() {
-    const frame = useCurrentFrame();
-    const offset = interpolate(frame, [0, 24], [40, 0], {
-      extrapolateRight: "clamp",
-    });
+### Tool parameters for integrations
 
-    return (
-      <AbsoluteFill style={{
-        backgroundColor: "#171d2b",
-        color: "#fff",
-        justifyContent: "center",
-        alignItems: "center",
-        padding: 72,
-        textAlign: "center",
-      }}>
-        <div style={{ transform: "translateY(" + offset + "px)" }}>
-          <Title />
-        </div>
-      </AbsoluteFill>
-    );
-  }
-`;
-
-create_video({
-  files: JSON.stringify({
-    "/src/Video.tsx": videoSource,
-    "/src/Title.tsx": 'export function Title() { return <span style={{ fontSize: 100 }}>From code to video</span>; }',
-  }),
-  width: 1080,
-  height: 1080,
-  fps: 30,
-  durationInFrames: 150,
-});
-```
-
-### 2. Inspect, fix, and inspect again
-
-```js
-inspect_frames({
-  frames: [0, 24, 60, 90, 120, 149],
-  previewWidth: 480,
-  imageFormat: "jpeg",
-  jpegQuality: 75,
-});
-```
-
-Open the returned contact sheet and decide what to change. For example, if the words feel cramped at preview size, give them more room by reducing the font size.
-
-```js
-// Call update_video instead when editing through a mounted player View.
-create_video({
-  files: JSON.stringify({
-    "/src/Title.tsx": 'export function Title() { return <span style={{ fontSize: 80 }}>From code to video</span>; }',
-  }),
-});
-
-inspect_frames({
-  frames: [0, 24, 60, 90, 120, 149],
-  previewWidth: 480,
-  imageFormat: "jpeg",
-  jpegQuality: 75,
-});
-```
-
-Pass either explicit zero-based `frames` or a `count` for automatic sampling. The default is six frames spaced across the timeline. Previews fit within 480×480 by default without upscaling. Use `previewWidth` or `scale` to change the resolution. Remotion renders at that reduced size directly. The response also includes the original composition metadata and the effective preview dimensions. PNG is the default format.
-
-### 3. Export once
-
-```js
-export_video({ outputName: "from-code-to-video.mp4", muted: true });
-```
-
-Export uses the composition's full resolution and current props. The output is H.264 with `yuv420p`, which requires even width and height. Set `muted: true` to omit the audio track. Download the MP4 from the returned URL while the server is running. Exports are temporary and anyone with the URL can download the file while it is available.
+- `inspect_frames` accepts zero-based `frames` or a `count` for automatic sampling. The default is six frames. Previews fit within 480×480 without upscaling. To override the size, pass either `previewWidth` or `scale`. The default format is PNG. For JPEG, set `imageFormat: "jpeg"` and optionally `jpegQuality`.
+- `export_video` accepts an optional `outputName` and `muted: true` to omit the audio track. It renders H.264 with `yuv420p` at full resolution, which requires even dimensions. Download the MP4 while the server is running. The file is temporary, and anyone with the link can download it while it is available.
 
 ## Run the fork locally
 
